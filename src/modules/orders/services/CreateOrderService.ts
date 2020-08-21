@@ -20,13 +20,76 @@ interface IRequest {
 @injectable()
 class CreateOrderService {
   constructor(
+    @inject('OrdersRepository')
     private ordersRepository: IOrdersRepository,
+    @inject('ProductsRepository')
     private productsRepository: IProductsRepository,
+    @inject('CustomersRepository')
     private customersRepository: ICustomersRepository,
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
-    // TODO
+    const customer = await this.customersRepository.findById(customer_id);
+
+    if (!customer) {
+      throw new AppError('Could not find any customer with the given id');
+    }
+
+    const existentProducts = await this.productsRepository.findAllById(
+      products,
+    );
+
+    if (!existentProducts.length) {
+      throw new AppError('Could not find any products with the givens ids');
+    }
+
+    const existentProductsId = existentProducts.map(product => product.id);
+
+    const ckeckInexistentProducts = products.filter(
+      product => !existentProductsId.includes(product.id),
+    );
+
+    if (ckeckInexistentProducts.length) {
+      throw new AppError(
+        `Could not find product ${ckeckInexistentProducts[0].id}`,
+      );
+    }
+
+    const findProductsWithNotQuantityAvailable = products.filter(
+      product =>
+        existentProducts.filter(p => p.id === product.id)[0].quantity <
+        product.quantity,
+    );
+
+    if (findProductsWithNotQuantityAvailable.length) {
+      throw new AppError(
+        `The quantity ${findProductsWithNotQuantityAvailable[0].quantity} is not available from ${findProductsWithNotQuantityAvailable[0].id}`,
+      );
+    }
+
+    const serializedProducts = products.map(product => ({
+      product_id: product.id,
+      quantity: product.quantity,
+      price: existentProducts.filter(p => p.id === product.id)[0].price,
+    }));
+
+    const order = await this.ordersRepository.create({
+      customer,
+      products: serializedProducts,
+    });
+
+    const { order_products } = order;
+
+    const orderedProductsQuantity = order_products.map(product => ({
+      id: product.product_id,
+      quantity:
+        existentProducts.filter(p => p.id === product.product_id)[0].quantity -
+        product.quantity,
+    }));
+
+    await this.productsRepository.updateQuantity(orderedProductsQuantity);
+
+    return order;
   }
 }
 
